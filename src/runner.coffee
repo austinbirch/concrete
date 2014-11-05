@@ -3,6 +3,7 @@ colors = require 'colors'
 git = require './git'
 server = require './server'
 exec = require('child_process').exec
+spawn = require('child_process').spawn
 mongo = require 'mongodb'
 jobs = require './jobs'
 
@@ -33,11 +34,10 @@ html = (input) ->
       return v
     else if v.cmd == 'm'
       cls = v.args.split(';').map((v) -> COLORS[parseInt v]).join(' ')
-      return "</span><span class=\"#{cls}\">"
+      return ''
     else
       return ''
-
-  return "<code><pre><span>#{result.join('')}</span></pre></code>"
+  return result.join(' ')
 
 
 runner = module.exports =
@@ -53,16 +53,54 @@ runNextJob = ->
                     runNextJob()
 
 runTask = (next)->
-    jobs.updateLog jobs.current, "Executing '#{git.runner}'"
-    exec git.runner,{maxBuffer: 1024*1024}, (error, stdout, stderr)=>
-        if error?
-            updateLog error, true, ->
-                updateLog stdout, true, ->
-                    updateLog stderr, true, ->
-                        runFile git.failure, next, no
-        else
-            updateLog stdout, true, ->
-                runFile git.success, next, yes
+    logQ = []
+    logQ.push ["Executing '#{git.runner}'\n\n", false]
+    logQ.push ["Running build task: #{git.runner}\n\n", false]
+
+    j = spawn "/bin/bash", [git.runner]
+    j.stdout.on 'data', (data) =>
+      logQ.push [data, false]
+    j.stderr.on 'data', (data) =>
+      logQ.push [data, true]
+    j.on 'error', (err) =>
+      logQ.push([
+        "Caught error running task #{err.message}\n\n",
+        true,
+        -> runFile git.failure, next, yes
+      ])
+    j.on 'close', (code) =>
+      if code == 0
+        logQ.push([
+          "Process exitied with code #{code}\n\n",
+          false,
+          -> runFile git.success, next, yes
+        ])
+      else
+        logQ.push([
+          "Process exited with code #{code}\n\n",
+          true,
+          -> runFile git.failure, next, no
+        ])
+
+    # to maintain log order: every second, check if we have anything in the
+    # log queue, and if we do, push and call log check again. If we find an
+    # item in the queue with 3 arguments, it is passing a done callback, so
+    # will be the last thing we will need to process. In this case, cancel
+    # the timer.
+    interval = null
+    processLogQ = ->
+      clearInterval interval if interval
+      if logQ.length is 0
+        interval = setInterval(processLogQ, 1000)
+        return
+      args = logQ.shift()
+      if args.length is 3
+        updateLog.apply this, args
+      else
+        updateLog.apply this, args.concat(->
+          processLogQ()
+        )
+    interval = setInterval(processLogQ, 1000)
 
 runFile = (file, next, args=null) ->
     jobs.updateLog jobs.current, "Executing #{file}", ->
@@ -85,4 +123,4 @@ updateLog = (buffer, isError, done) ->
     else
         errorClass = ''
         console.log content
-    jobs.updateLog jobs.current, "<span class='output#{errorClass}'>#{content}</span>", done
+    jobs.updateLog jobs.current, content, done

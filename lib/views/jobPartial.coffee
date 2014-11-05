@@ -7,5 +7,5 @@ li '.job', ->
             outcomeClass = if @job.failed then '.failure' else '.success'
             div ".outcome#{outcomeClass}", ->
                 if @job.failed then '&#10008;&nbsp;failure' else '&#10003;&nbsp;success'
-    div '.job_container', ->
+    pre '.job_container', ->
         @job.log

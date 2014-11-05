@@ -64,7 +64,7 @@ jobs = module.exports =
             collection.findOne {_id: new ObjectID id}, (error, job) ->
                 console.log "update log for job #{job}, #{string}"
                 return no if not job?
-                job.log += "#{string} <br />"
+                job.log += "#{string}"
                 collection.save(job)
                 next() if next?
 
